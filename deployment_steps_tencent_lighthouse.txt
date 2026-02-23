@@ -1,0 +1,204 @@
+﻿[Deployment Runbook] Web App + WeChat Mini Program on Tencent Lighthouse (鑵捐杞婚噺鏈嶅姟鍣?
+Date: 2026-02-22
+
+============================================================
+1) Target Architecture
+============================================================
+- Server: Tencent Lighthouse (Ubuntu 22.04)
+- Reverse proxy: Nginx
+- Backend API: Node/Java/Python service
+- Web frontend: static build (or SSR)
+- Domain:
+  - https://www.yourdomain.com  (Web)
+  - https://api.yourdomain.com  (API for Web + Mini Program)
+
+============================================================
+2) Preconditions (China production)
+============================================================
+1. Domain purchased and resolved.
+2. ICP filing (ICP澶囨) completed.
+3. SSL certificate ready (Tencent Cloud SSL is fine).
+4. WeChat Mini Program AppID and admin access available.
+
+============================================================
+3) Server Initialization
+============================================================
+From Windows PowerShell:
+ssh ubuntu@<SERVER_PUBLIC_IP>
+
+On server:
+sudo apt update && sudo apt -y upgrade
+sudo timedatectl set-timezone Asia/Shanghai
+sudo apt -y install nginx git curl ufw
+
+Firewall:
+sudo ufw allow 22
+sudo ufw allow 80
+sudo ufw allow 443
+sudo ufw enable
+sudo ufw status
+
+(Also ensure Lighthouse firewall/security group allows 22/80/443.)
+
+============================================================
+4) Runtime Installation (Node.js example)
+============================================================
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt -y install nodejs
+sudo npm i -g pm2 pnpm
+node -v
+npm -v
+
+============================================================
+5) Deploy Backend API
+============================================================
+cd /var/www
+sudo mkdir -p /var/www/api && sudo chown -R $USER:$USER /var/www/api
+cd /var/www/api
+git clone <YOUR_BACKEND_REPO_URL> .
+pnpm install
+cp .env.example .env
+# Edit .env with production values:
+# DB, Redis, JWT, WECHAT_APPID, WECHAT_SECRET, etc.
+pnpm build
+
+# Start app with PM2 (example)
+pm2 start ecosystem.config.js --env production
+pm2 save
+pm2 startup
+
+============================================================
+6) Deploy Web Frontend
+============================================================
+cd /var/www
+sudo mkdir -p /var/www/web && sudo chown -R $USER:$USER /var/www/web
+cd /var/www/web
+git clone <YOUR_WEB_REPO_URL> .
+pnpm install
+pnpm build
+# Output usually in /var/www/web/dist (or build)
+
+============================================================
+7) Nginx Configuration (Web + API)
+============================================================
+Create file: /etc/nginx/sites-available/yourapp.conf
+
+server {
+    listen 80;
+    server_name yourdomain.com www.yourdomain.com;
+
+    root /var/www/web/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+
+server {
+    listen 80;
+    server_name api.yourdomain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;   # backend port
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+
+Enable + reload:
+sudo ln -s /etc/nginx/sites-available/yourapp.conf /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+
+============================================================
+8) Enable HTTPS (required by Mini Program)
+============================================================
+sudo apt -y install certbot python3-certbot-nginx
+sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com -d api.yourdomain.com
+sudo systemctl status certbot.timer
+
+============================================================
+9) DNS Settings
+============================================================
+Add records:
+- A  @    -> <SERVER_PUBLIC_IP>
+- A  www  -> <SERVER_PUBLIC_IP>
+- A  api  -> <SERVER_PUBLIC_IP>
+
+Verify on Windows:
+nslookup api.yourdomain.com
+
+============================================================
+10) WeChat Mini Program Domain Configuration
+============================================================
+In mp.weixin.qq.com:
+寮€鍙戠鐞?-> 寮€鍙戣缃?-> 鏈嶅姟鍣ㄥ煙鍚?
+
+Set:
+- request鍚堟硶鍩熷悕:      https://api.yourdomain.com
+- uploadFile鍚堟硶鍩熷悕:   https://api.yourdomain.com (if needed)
+- downloadFile鍚堟硶鍩熷悕: https://api.yourdomain.com (if needed)
+- socket鍚堟硶鍩熷悕:       wss://api.yourdomain.com (if needed)
+
+Rules:
+- Must be HTTPS
+- Must be澶囨-compliant
+- Production should not use raw IP
+
+============================================================
+11) Mini Program Release Steps
+============================================================
+1. Open WeChat DevTools and set AppID.
+2. Set API base URL: https://api.yourdomain.com
+3. Test login/payment/business APIs.
+4. Upload code package.
+5. Submit review and publish.
+
+Note:
+Mini Program frontend package is hosted/released by WeChat platform.
+Your server provides API/assets only.
+
+============================================================
+12) Operations & Hardening
+============================================================
+- Process monitor: pm2 save && pm2 startup
+- Logs:
+  pm2 logs
+  sudo tail -f /var/log/nginx/error.log
+- SSH hardening:
+  - disable password login
+  - key-based auth only
+- Backups:
+  - DB daily dump + offsite backup
+- Optional:
+  - fail2ban
+  - monitoring/alerts
+
+============================================================
+13) Final Validation Checklist
+============================================================
+- https://www.yourdomain.com works
+- https://api.yourdomain.com/health returns 200
+- Mini Program real-device API calls pass
+- SSL valid and no mixed-content errors
+- Reboot test:
+  - Nginx auto-starts
+  - PM2 app auto-starts
+
+============================================================
+14) Quick Troubleshooting
+============================================================
+- Nginx config test:
+  sudo nginx -t
+- Nginx status:
+  sudo systemctl status nginx
+- PM2 process:
+  pm2 list
+  pm2 logs <app_name>
+- Port check:
+  ss -lntp | grep 3000
+- Firewall:
+  sudo ufw status

@@ -1,0 +1,175 @@
+<view class="card">
+  <view class="title">BiomechBase Mini</view>
+  <view class="subtitle">{{user.username}} ({{user.role}})</view>
+  <button class="btn-secondary" bindtap="logout">Sign Out</button>
+</view>
+
+<view class="card tab-wrap">
+  <view class="tab {{activeTab==='subjects' ? 'active' : ''}}" data-tab="subjects" bindtap="switchTab">Subjects</view>
+  <view class="tab {{activeTab==='protocols' ? 'active' : ''}}" data-tab="protocols" bindtap="switchTab">Study Protocols</view>
+  <view class="tab {{activeTab==='stats' ? 'active' : ''}}" data-tab="stats" bindtap="switchTab">Stats</view>
+  <view wx:if="{{user.role==='Admin'}}" class="tab {{activeTab==='admin' ? 'active' : ''}}" data-tab="admin" bindtap="switchTab">Admin</view>
+</view>
+
+<view class="card recycle-wrap">
+  <button class="btn-secondary" bindtap="toggleRecycleBin">{{showRecycleBin ? 'Back To Active' : 'Recycle Bin'}}</button>
+</view>
+
+<view wx:if="{{activeTab==='stats'}}" class="card">
+  <view class="section-title">Stats Dashboard</view>
+  <view class="stats-grid">
+    <view class="stat-card">
+      <view class="stat-label">Total Enrollment</view>
+      <view class="stat-value">{{stats.totalSubjects}}</view>
+    </view>
+    <view class="stat-card">
+      <view class="stat-label">Consented</view>
+      <view class="stat-value">{{stats.consentedCount}}</view>
+    </view>
+    <view class="stat-card">
+      <view class="stat-label">Excluded</view>
+      <view class="stat-value">{{stats.excludedCount}}</view>
+    </view>
+    <view class="stat-card">
+      <view class="stat-label">Completeness</view>
+      <view class="stat-value">{{stats.completenessRate}}%</view>
+      <view class="item-sub">{{stats.completeRecords}} / {{stats.totalSubjects}} complete</view>
+    </view>
+  </view>
+</view>
+
+<view wx:if="{{activeTab==='admin' && user.role==='Admin'}}" class="card">
+  <view class="section-title">Admin Tools</view>
+
+  <view wx:if="{{user.adminTier===1}}" class="form-wrap">
+    <view class="form-title">Database Backup / Restore</view>
+    <view class="btn-row">
+      <button class="btn-secondary" loading="{{backupExporting}}" bindtap="exportBackup">Export Full Backup</button>
+      <button class="danger-mini" loading="{{backupImporting}}" bindtap="importBackup">Restore Backup File</button>
+    </view>
+    <view wx:if="{{lastBackupFileName}}" class="hint">Exported: {{lastBackupFileName}}</view>
+  </view>
+
+  <view wx:if="{{user.adminTier===1}}" class="form-wrap">
+    <view class="form-title">User Management</view>
+    <view wx:if="{{!creatingUser}}" class="btn-row">
+      <button class="btn-primary" bindtap="startCreateUser">Create User</button>
+    </view>
+
+    <view wx:if="{{creatingUser}}">
+      <input class="input" placeholder="Username" data-field="newUsername" value="{{newUsername}}" bindinput="onInput" />
+      <input class="input" placeholder="Full Name" data-field="newFullName" value="{{newFullName}}" bindinput="onInput" />
+      <input class="input" placeholder="Email" data-field="newEmail" value="{{newEmail}}" bindinput="onInput" />
+      <picker mode="selector" range="{{['Researcher','Admin']}}" value="{{newRole==='Admin' ? 1 : 0}}" bindchange="onRoleChange">
+        <view class="picker">Role: {{newRole}}</view>
+      </picker>
+      <input class="input" password="true" placeholder="Temporary Password (min 8 chars)" data-field="newPassword" value="{{newPassword}}" bindinput="onInput" />
+      <view class="btn-row">
+        <button class="btn-primary" bindtap="createUser">Save User</button>
+        <button class="btn-secondary" bindtap="cancelCreateUser">Cancel</button>
+      </view>
+    </view>
+
+    <view wx:if="{{users.length===0}}" class="empty">No users</view>
+    <block wx:for="{{users}}" wx:key="id">
+      <view class="item-row">
+        <view class="item-main">{{item.fullName}} · {{item.username}}</view>
+        <view class="item-sub">{{item.role}}{{item.adminTier===1 ? ' (Primary Admin)' : ''}} · {{item.isActive ? 'Active' : 'Pending'}}</view>
+        <view class="btn-row" wx:if="{{item.role!=='Admin' || item.adminTier!==1}}">
+          <button size="mini" class="btn-secondary" data-id="{{item.id}}" bindtap="toggleUserStatus">{{item.isActive ? 'Deactivate' : 'Approve'}}</button>
+          <button size="mini" class="btn-secondary" data-id="{{item.id}}" bindtap="resetUserPassword">Reset Password</button>
+          <button size="mini" class="danger-mini" data-id="{{item.id}}" bindtap="deleteUser">Delete</button>
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <view wx:if="{{user.adminTier!==1}}" class="hint">Primary Admin access required for user and backup management.</view>
+</view>
+
+<view wx:if="{{activeTab==='subjects'}}" class="card">
+  <view class="section-title">Subject Records</view>
+
+  <view wx:if="{{user.role!=='Visitor'}}" class="form-wrap">
+    <view class="form-title">{{editingSubjectId ? 'Edit Subject' : 'Create Subject'}}</view>
+    <input class="input {{subjectConflict.subject_id ? 'input-conflict' : ''}}" placeholder="Subject ID" data-field="subject_id" value="{{subject_id}}" bindinput="onInput" />
+    <view wx:if="{{subjectConflict.subject_id}}" class="conflict-label">Conflict detected</view>
+    <input class="input {{subjectConflict.cohort_group ? 'input-conflict' : ''}}" placeholder="Cohort Group" data-field="cohort_group" value="{{cohort_group}}" bindinput="onInput" />
+    <view wx:if="{{subjectConflict.cohort_group}}" class="conflict-label">Conflict detected</view>
+    <input class="input {{subjectConflict.enrollment_date ? 'input-conflict' : ''}}" placeholder="Enrollment Date (YYYY-MM-DD)" data-field="enrollment_date" value="{{enrollment_date}}" bindinput="onInput" />
+    <view wx:if="{{subjectConflict.enrollment_date}}" class="conflict-label">Conflict detected</view>
+    <input class="input {{subjectConflict.diagnosis ? 'input-conflict' : ''}}" placeholder="Diagnosis" data-field="diagnosis" value="{{diagnosis}}" bindinput="onInput" />
+    <view wx:if="{{subjectConflict.diagnosis}}" class="conflict-label">Conflict detected</view>
+    <input class="input {{subjectConflict.notes ? 'input-conflict' : ''}}" placeholder="Notes" data-field="notes" value="{{notes}}" bindinput="onInput" />
+    <view wx:if="{{subjectConflict.notes}}" class="conflict-label">Conflict detected</view>
+
+    <view wx:if="{{editingSubjectId && currentSubjectImageNames.length}}" class="hint">Current subject images: {{currentSubjectImageNames.join(', ')}}</view>
+    <button wx:if="{{editingSubjectId && currentSubjectImageNames.length}}" class="btn-secondary" bindtap="openEditingSubjectImage">Preview Current Images</button>
+    <button class="btn-secondary" bindtap="chooseSubjectImage">Choose Subject Images</button>
+    <view class="hint">Allowed: JPEG, PNG</view>
+    <view wx:if="{{removeSubjectImage}}" class="conflict-label">Current images will be removed on save</view>
+    <view wx:if="{{subjectImageNames.length}}" class="hint replace-hint">Selected: {{subjectImageNames.join(', ')}}</view>
+    <button wx:if="{{editingSubjectId && (currentSubjectImageNames.length || subjectImageNames.length)}}" class="danger-mini" bindtap="removeCurrentSubjectImage">Remove Images</button>
+
+    <view class="btn-row">
+      <button class="btn-primary" bindtap="saveSubject">{{editingSubjectId ? 'Save Subject' : 'Create Subject'}}</button>
+      <button class="btn-secondary" bindtap="startCreateSubject">Clear</button>
+    </view>
+  </view>
+
+  <view wx:if="{{subjects.length===0}}" class="empty">No records</view>
+  <block wx:for="{{subjects}}" wx:key="id">
+    <view class="item-row">
+      <view class="item-main">{{item.subject_id}} · {{item.cohort_group}}</view>
+      <view class="item-sub">v{{item.version}} · {{item.diagnosis || 'N/A'}}</view>
+      <view class="btn-row" wx:if="{{user.role!=='Visitor'}}">
+        <button wx:if="{{(item.staticImages && item.staticImages.length) || item.staticImage}}" size="mini" class="btn-secondary" data-id="{{item.id}}" bindtap="openSubjectImage">Open Images</button>
+        <button wx:if="{{!showRecycleBin}}" size="mini" class="btn-secondary" data-id="{{item.id}}" bindtap="startEditSubject">Edit</button>
+        <button size="mini" class="{{showRecycleBin ? 'btn-secondary' : 'danger-mini'}}" data-id="{{item.id}}" bindtap="deleteOrRestoreSubject">{{showRecycleBin ? 'Restore' : 'Delete'}}</button>
+      </view>
+    </view>
+  </block>
+</view>
+
+<view wx:if="{{activeTab==='protocols'}}" class="card">
+  <view class="section-title">Study Protocols</view>
+
+  <view wx:if="{{user.role==='Admin'}}">
+    <view class="form-title">{{editingProtocolId ? 'Edit Protocol' : 'Create Protocol'}}</view>
+    <input class="input {{protocolConflict.projectName ? 'input-conflict' : ''}}" placeholder="Project Name" data-field="projectName" value="{{projectName}}" bindinput="onInput" />
+    <view wx:if="{{protocolConflict.projectName}}" class="conflict-label">Conflict detected</view>
+    <input class="input {{protocolConflict.projectId ? 'input-conflict' : ''}}" placeholder="Project ID" data-field="projectId" value="{{projectId}}" bindinput="onInput" />
+    <view wx:if="{{protocolConflict.projectId}}" class="conflict-label">Conflict detected</view>
+    <input class="input {{protocolConflict.executionTime ? 'input-conflict' : ''}}" placeholder="Execution Time" data-field="executionTime" value="{{executionTime}}" bindinput="onInput" />
+    <view wx:if="{{protocolConflict.executionTime}}" class="conflict-label">Conflict detected</view>
+    <input class="input {{protocolConflict.protocolNotes ? 'input-conflict' : ''}}" placeholder="Notes" data-field="protocolNotes" value="{{protocolNotes}}" bindinput="onInput" />
+    <view wx:if="{{protocolConflict.protocolNotes}}" class="conflict-label">Conflict detected</view>
+
+    <view wx:if="{{editingProtocolId && currentProtocolFileName}}" class="hint">Current ethics file: {{currentProtocolFileName}}</view>
+    <button wx:if="{{editingProtocolId && currentProtocolFileName}}" class="btn-secondary" bindtap="openEditingEthical">Preview Current Ethics</button>
+
+    <button class="btn-secondary {{protocolConflict.protocolFile ? 'btn-conflict' : ''}}" bindtap="chooseProtocolFile">Choose Ethical File</button>
+    <view class="hint">Allowed: PDF, JPEG, PNG</view>
+    <view wx:if="{{protocolConflict.protocolFile}}" class="conflict-label">Conflict detected</view>
+    <view wx:if="{{protocolFileName}}" class="hint replace-hint {{protocolConflict.protocolFile ? 'input-conflict-text' : ''}}">Replacement selected: {{protocolFileName}}</view>
+    <view class="btn-row">
+      <button class="btn-primary" bindtap="saveProtocol">{{editingProtocolId ? 'Save Protocol' : 'Create Protocol'}}</button>
+      <button class="btn-secondary" bindtap="startCreateProtocol">Clear</button>
+    </view>
+  </view>
+
+  <view wx:if="{{user.role!=='Admin'}}" class="hint">Read-only: Researchers can view and open ethical files.</view>
+
+  <view wx:if="{{protocols.length===0}}" class="empty">No protocols</view>
+  <block wx:for="{{protocols}}" wx:key="id">
+    <view class="item-row">
+      <view class="item-main">{{item.projectId}} · {{item.projectName}}</view>
+      <view class="item-sub">v{{item.version}} · {{item.executionTime}}</view>
+      <view class="btn-row">
+        <button size="mini" class="btn-secondary" data-id="{{item.id}}" bindtap="openEthical">Open Ethics</button>
+        <button wx:if="{{user.role==='Admin' && !showRecycleBin}}" size="mini" class="btn-secondary" data-id="{{item.id}}" bindtap="startEditProtocol">Edit</button>
+        <button wx:if="{{user.role==='Admin'}}" size="mini" class="{{showRecycleBin ? 'btn-secondary' : 'danger-mini'}}" data-id="{{item.id}}" bindtap="deleteOrRestoreProtocol">{{showRecycleBin ? 'Restore' : 'Delete'}}</button>
+      </view>
+    </view>
+  </block>
+</view>

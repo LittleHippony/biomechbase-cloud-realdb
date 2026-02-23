@@ -1,0 +1,14 @@
+{
+  "description": "BiomechBase WeChat Mini Program",
+  "appid": "touristappid",
+  "projectname": "biomechbase-miniapp",
+  "miniprogramRoot": "./",
+  "compileType": "miniprogram",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true
+  },
+  "libVersion": "2.32.3"
+}

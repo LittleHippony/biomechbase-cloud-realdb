@@ -1,0 +1,9 @@
+{
+  "desc": "BiomechBase miniapp sitemap",
+  "rules": [
+    {
+      "action": "allow",
+      "page": "*"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "BiomechBase",
+  "description": "A comprehensive data management suite for Subject Baseline Information in Sports and Clinical Biomechanics. Features CRUD operations, data visualization, file I/O, and AI-powered synthetic data generation.",
+  "requestFramePermissions": []
+}

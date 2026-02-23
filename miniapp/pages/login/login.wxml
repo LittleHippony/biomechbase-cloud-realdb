@@ -1,0 +1,11 @@
+<view class="card">
+  <view class="title">BiomechBase Mini</view>
+  <view class="subtitle">Baseline Data Manager by Hippony Lab</view>
+
+  <input class="input" placeholder="Username" value="{{username}}" bindinput="onInputUsername" />
+  <input class="input" placeholder="Password" password="true" value="{{password}}" bindinput="onInputPassword" />
+
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+
+  <button class="btn-primary" loading="{{loading}}" bindtap="onSubmit">Sign In</button>
+</view>
