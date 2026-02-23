@@ -20,9 +20,10 @@ This starts:
 - Frontend (Vite) on `http://localhost:5173`
 - Backend API on `http://localhost:3001`
 
-Default admin login:
-- Username: `admin`
-- Password: `Dongweiliu`
+Authentication setup:
+- A default admin account may be created during local initialization.
+- Do not publish or share default credentials in repository documents.
+- Change admin credentials immediately after first startup.
 
 ## Environment Variables
 
