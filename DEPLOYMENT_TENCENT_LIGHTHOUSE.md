@@ -119,13 +119,38 @@ Expected result:
 
 ---
 
-## 7) Start backend API with PM2
+## 7) Configure MySQL (recommended for production)
+
+If you use Tencent Lighthouse MySQL on the same server:
+
+```bash
+sudo apt -y install mysql-server
+sudo systemctl enable mysql
+sudo systemctl start mysql
+sudo mysql
+```
+
+Run in MySQL shell:
+
+```sql
+CREATE DATABASE IF NOT EXISTS biomechbase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'biomech'@'localhost' IDENTIFIED BY 'CHANGE_THIS_STRONG_PASSWORD';
+GRANT ALL PRIVILEGES ON biomechbase.* TO 'biomech'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+If MySQL is on another host, open port `3306` only to your API server IP and use that IP in `MYSQL_HOST`.
+
+---
+
+## 8) Start backend API with PM2
 
 Your backend entry is `server/index.js`.
 
 ```bash
 cd /var/www/biomechbase
-PORT=3001 FRONTEND_ORIGIN=https://yourdomain.com pm2 start server/index.js --name biomech-api
+DB_MODE=mysql MYSQL_HOST=127.0.0.1 MYSQL_PORT=3306 MYSQL_USER=biomech MYSQL_PASSWORD=CHANGE_THIS_STRONG_PASSWORD MYSQL_DATABASE=biomechbase PORT=3001 FRONTEND_ORIGIN=https://yourdomain.com pm2 start server/index.js --name biomech-api
 pm2 save
 pm2 startup
 ```
@@ -149,7 +174,7 @@ Should return JSON like status `ok`.
 
 ---
 
-## 8) Configure Nginx (web + /api proxy)
+## 9) Configure Nginx (web + /api proxy)
 
 Create config:
 
@@ -197,7 +222,7 @@ Now test:
 
 ---
 
-## 9) Enable HTTPS (required for mini program production)
+## 10) Enable HTTPS (required for mini program production)
 
 Install certbot:
 
@@ -223,7 +248,7 @@ Test HTTPS:
 
 ---
 
-## 10) Web app production config notes
+## 11) Web app production config notes
 
 Your current web code already supports single-domain deployment:
 - `config.ts` uses `VITE_API_URL || ''`
@@ -247,7 +272,7 @@ sudo systemctl reload nginx
 
 ---
 
-## 11) WeChat Mini Program production config
+## 12) WeChat Mini Program production config
 
 ### 11.1 Update miniapp API base URL
 
@@ -280,7 +305,7 @@ If you use upload/download APIs, also add same domain there.
 
 ---
 
-## 12) Daily operations
+## 13) Daily operations
 
 ### Update code
 
@@ -302,10 +327,14 @@ sudo tail -f /var/log/nginx/error.log
 
 ### Backup (important for this project)
 
-Your data file is:
-- `/var/www/biomechbase/server/db.json`
+For MySQL mode:
 
-Quick backup command:
+```bash
+mkdir -p /var/backups/biomechbase
+mysqldump -u biomech -p biomechbase > /var/backups/biomechbase/db-$(date +%F-%H%M%S).sql
+```
+
+For legacy JSON mode only:
 
 ```bash
 mkdir -p /var/backups/biomechbase
@@ -314,7 +343,7 @@ cp /var/www/biomechbase/server/db.json /var/backups/biomechbase/db-$(date +%F-%H
 
 ---
 
-## 13) Troubleshooting checklist
+## 14) Troubleshooting checklist
 
 ### Site not reachable
 
@@ -338,6 +367,13 @@ pm2 logs biomech-api --lines 100
 curl http://127.0.0.1:3001/api/health
 ```
 
+### MySQL connection errors
+
+- Check PM2 env values (`DB_MODE`, `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_DATABASE`)
+- Check MySQL service: `sudo systemctl status mysql`
+- Check login manually: `mysql -u biomech -p -h 127.0.0.1 biomechbase`
+- If remote MySQL: confirm Tencent firewall/security group allows `3306` from API server IP
+
 ### Miniapp request fails on real device
 
 - Confirm HTTPS cert valid
@@ -347,7 +383,7 @@ curl http://127.0.0.1:3001/api/health
 
 ---
 
-## 14) Quick one-time validation (after full deployment)
+## 15) Quick one-time validation (after full deployment)
 
 1. Open `https://yourdomain.com`
 2. Login with your app account

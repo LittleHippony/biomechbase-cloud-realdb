@@ -28,12 +28,18 @@ curl -fsS https://yourdomain.com/api/health
 curl -I https://yourdomain.com
 ```
 
-## 4) Backup Database File
+## 4) Backup Database
 
 ```bash
 mkdir -p /var/backups/biomechbase
-cp /var/www/biomechbase/server/db.json /var/backups/biomechbase/db-$(date +%F-%H%M%S).json
+mysqldump -u biomech -p biomechbase > /var/backups/biomechbase/db-$(date +%F-%H%M%S).sql
 ls -lh /var/backups/biomechbase | tail -n 5
+```
+
+Legacy JSON mode only:
+
+```bash
+cp /var/www/biomechbase/server/db.json /var/backups/biomechbase/db-$(date +%F-%H%M%S).json
 ```
 
 ## 5) If Deploy Fails (Quick Logs)

@@ -63,7 +63,9 @@ Both clients operate on the same subject/protocol data model and call the same `
 **Tech Stack**
 - Node.js
 - Express
-- JSON file persistence (`server/db.json`)
+- Persistence layer with selectable backend:
+  - MySQL (recommended for production)
+  - JSON file (`server/db.json`, fallback/dev mode)
 
 ---
 

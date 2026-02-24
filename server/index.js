@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import mysql from 'mysql2/promise';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,11 +12,38 @@ const DB_PATH = path.join(__dirname, 'db.json');
 
 const PORT = Number(process.env.PORT || 3001);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
+const DB_MODE = String(process.env.DB_MODE || 'json').toLowerCase();
+const MYSQL_HOST = process.env.MYSQL_HOST || '127.0.0.1';
+const MYSQL_PORT = Number(process.env.MYSQL_PORT || 3306);
+const MYSQL_USER = process.env.MYSQL_USER || 'root';
+const MYSQL_PASSWORD = process.env.MYSQL_PASSWORD || '';
+const MYSQL_DATABASE = process.env.MYSQL_DATABASE || 'biomechbase';
+const MYSQL_TABLE = process.env.MYSQL_TABLE || 'app_state';
+const MYSQL_SSL = String(process.env.MYSQL_SSL || 'false').toLowerCase() === 'true';
 
 const app = express();
 app.use(cors({ origin: FRONTEND_ORIGIN === '*' ? true : FRONTEND_ORIGIN }));
 app.use(express.json({ limit: '25mb' }));
 const sessions = new Map();
+let mysqlPool = null;
+
+const defaultDb = {
+  subjects: [],
+  studyProtocols: [],
+  users: [
+    {
+      id: 'usr_admin',
+      username: 'admin',
+      password: 'Dongweiliu',
+      fullName: 'System Administrator',
+      email: 'admin@biomech.sys',
+      role: 'Admin',
+      adminTier: 1,
+      isActive: true,
+      lastLogin: null
+    }
+  ]
+};
 
 const ALLOWED_ETHICAL_FILE_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const ALLOWED_SUBJECT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png']);
@@ -193,31 +221,8 @@ const validateSubjectStaticImagesPayload = (inputImages) => {
   return { ok: true, normalized: normalizedImages };
 };
 
-const readDb = () => {
-  if (!fs.existsSync(DB_PATH)) {
-    const defaultDb = {
-      subjects: [],
-      studyProtocols: [],
-      users: [
-        {
-          id: 'usr_admin',
-          username: 'admin',
-          password: 'Dongweiliu',
-          fullName: 'System Administrator',
-          email: 'admin@biomech.sys',
-          role: 'Admin',
-          adminTier: 1,
-          isActive: true,
-          lastLogin: null
-        }
-      ]
-    };
-    fs.writeFileSync(DB_PATH, JSON.stringify(defaultDb, null, 2), 'utf-8');
-    return defaultDb;
-  }
-
-  const raw = fs.readFileSync(DB_PATH, 'utf-8');
-  const parsed = JSON.parse(raw || '{}');
+const normalizeDb = (parsedInput) => {
+  const parsed = parsedInput && typeof parsedInput === 'object' ? parsedInput : {};
   const users = Array.isArray(parsed.users) ? parsed.users : [];
   const protocols = Array.isArray(parsed.studyProtocols) ? parsed.studyProtocols : [];
   const normalizedUsers = users.map((user) => {
@@ -263,8 +268,98 @@ const readDb = () => {
   };
 };
 
-const writeDb = (db) => {
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf-8');
+const readDbFromJsonFile = () => {
+  if (!fs.existsSync(DB_PATH)) {
+    fs.writeFileSync(DB_PATH, JSON.stringify(defaultDb, null, 2), 'utf-8');
+    return normalizeDb(defaultDb);
+  }
+
+  const raw = fs.readFileSync(DB_PATH, 'utf-8');
+  const parsed = JSON.parse(raw || '{}');
+  return normalizeDb(parsed);
+};
+
+const writeDbToJsonFile = (db) => {
+  fs.writeFileSync(DB_PATH, JSON.stringify(normalizeDb(db), null, 2), 'utf-8');
+};
+
+const ensureMySqlPool = async () => {
+  if (mysqlPool) return mysqlPool;
+
+  mysqlPool = mysql.createPool({
+    host: MYSQL_HOST,
+    port: MYSQL_PORT,
+    user: MYSQL_USER,
+    password: MYSQL_PASSWORD,
+    database: MYSQL_DATABASE,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    ssl: MYSQL_SSL ? { rejectUnauthorized: false } : undefined
+  });
+
+  await mysqlPool.query(`
+    CREATE TABLE IF NOT EXISTS \`${MYSQL_TABLE}\` (
+      id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+      state_json LONGTEXT NOT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  const [rows] = await mysqlPool.query(`SELECT id FROM \`${MYSQL_TABLE}\` WHERE id = 1 LIMIT 1`);
+  if (!Array.isArray(rows) || rows.length === 0) {
+    await mysqlPool.query(
+      `INSERT INTO \`${MYSQL_TABLE}\` (id, state_json) VALUES (1, ?)`,
+      [JSON.stringify(defaultDb)]
+    );
+  }
+
+  return mysqlPool;
+};
+
+const readDbFromMySql = async () => {
+  const pool = await ensureMySqlPool();
+  const [rows] = await pool.query(`SELECT state_json FROM \`${MYSQL_TABLE}\` WHERE id = 1 LIMIT 1`);
+  const stateJson = Array.isArray(rows) && rows.length > 0 ? rows[0].state_json : null;
+  if (!stateJson) {
+    await pool.query(
+      `INSERT INTO \`${MYSQL_TABLE}\` (id, state_json) VALUES (1, ?) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json)`,
+      [JSON.stringify(defaultDb)]
+    );
+    return normalizeDb(defaultDb);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stateJson);
+  } catch {
+    parsed = defaultDb;
+  }
+  return normalizeDb(parsed);
+};
+
+const writeDbToMySql = async (db) => {
+  const pool = await ensureMySqlPool();
+  const normalized = normalizeDb(db);
+  await pool.query(
+    `INSERT INTO \`${MYSQL_TABLE}\` (id, state_json) VALUES (1, ?) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json)`,
+    [JSON.stringify(normalized)]
+  );
+};
+
+const readDb = async () => {
+  if (DB_MODE === 'mysql') {
+    return readDbFromMySql();
+  }
+  return readDbFromJsonFile();
+};
+
+const writeDb = async (db) => {
+  if (DB_MODE === 'mysql') {
+    await writeDbToMySql(db);
+    return;
+  }
+  writeDbToJsonFile(db);
 };
 
 const stripPassword = (user) => {
@@ -277,7 +372,7 @@ const normalizeRole = (role) => {
   return 'Researcher';
 };
 
-const requireAuth = (req, res, next) => {
+const requireAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization || '';
   if (!authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Missing or invalid authorization token.' });
@@ -289,7 +384,7 @@ const requireAuth = (req, res, next) => {
     return res.status(401).json({ message: 'Session expired or invalid. Please sign in again.' });
   }
 
-  const db = readDb();
+  const db = await readDb();
   const user = db.users.find((u) => u.id === session.userId);
   if (!user) {
     sessions.delete(token);
@@ -369,12 +464,12 @@ const sanitizeSubjectForUser = (subject, canViewConfidential) => {
 };
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'biomechbase-api' });
+  res.json({ ok: true, service: 'biomechbase-api', dbMode: DB_MODE });
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
 
   const user = db.users.find((u) => u.username === username && u.password === password);
   if (!user) {
@@ -391,7 +486,7 @@ app.post('/api/auth/login', (req, res) => {
   if (user.role === 'Researcher' && !user.firstLoginCompleted) {
     user.firstLoginCompleted = true;
   }
-  writeDb(db);
+  await writeDb(db);
 
   for (const [token, session] of sessions.entries()) {
     if (session.userId === user.id) {
@@ -413,13 +508,13 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
-app.post('/api/auth/logout', requireAuth, (req, res) => {
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
   sessions.delete(req.authToken);
   res.status(204).send();
 });
 
-app.get('/api/auth/admins', (_req, res) => {
-  const db = readDb();
+app.get('/api/auth/admins', async (_req, res) => {
+  const db = await readDb();
   const admins = db.users
     .filter((u) => u.role === 'Admin' && u.isActive)
     .map((u) => ({
@@ -431,9 +526,9 @@ app.get('/api/auth/admins', (_req, res) => {
   res.json(admins);
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const { username, password, fullName, email, role, requestedAdminId } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const normalizedRole = normalizeRole(role);
 
   if (!username || !password || !fullName || !email) {
@@ -481,18 +576,18 @@ app.post('/api/auth/register', (req, res) => {
   };
 
   db.users.push(user);
-  writeDb(db);
+  await writeDb(db);
   return res.status(201).json(stripPassword(user));
 });
 
-app.get('/api/users', requireAuth, requireTierOneAdmin, (_req, res) => {
-  const db = readDb();
+app.get('/api/users', requireAuth, requireTierOneAdmin, async (_req, res) => {
+  const db = await readDb();
   res.json(db.users.map(stripPassword));
 });
 
-app.post('/api/users', requireAuth, requireTierOneAdmin, (req, res) => {
+app.post('/api/users', requireAuth, requireTierOneAdmin, async (req, res) => {
   const { username, fullName, email, role, isActive, password } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const normalizedRole = normalizeRole(role);
 
   if (!username || !fullName || !email || !role || !password) {
@@ -523,14 +618,14 @@ app.post('/api/users', requireAuth, requireTierOneAdmin, (req, res) => {
   };
 
   db.users.push(newUser);
-  writeDb(db);
+  await writeDb(db);
   res.status(201).json(stripPassword(newUser));
 });
 
-app.put('/api/users/:id', requireAuth, requireTierOneAdmin, (req, res) => {
+app.put('/api/users/:id', requireAuth, requireTierOneAdmin, async (req, res) => {
   const { id } = req.params;
   const updates = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const index = db.users.findIndex((u) => u.id === id);
 
   if (index === -1) return res.status(404).json({ message: 'User not found' });
@@ -560,14 +655,14 @@ app.put('/api/users/:id', requireAuth, requireTierOneAdmin, (req, res) => {
   }
 
   db.users[index] = { ...db.users[index], ...safeUpdates, id: db.users[index].id };
-  writeDb(db);
+  await writeDb(db);
   res.json(stripPassword(db.users[index]));
 });
 
-app.post('/api/users/:id/reset-password', requireAuth, requireTierOneAdmin, (req, res) => {
+app.post('/api/users/:id/reset-password', requireAuth, requireTierOneAdmin, async (req, res) => {
   const { id } = req.params;
   const { password } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const index = db.users.findIndex((u) => u.id === id);
 
   if (index === -1) return res.status(404).json({ message: 'User not found' });
@@ -580,13 +675,13 @@ app.post('/api/users/:id/reset-password', requireAuth, requireTierOneAdmin, (req
     db.users[index].firstLoginCompleted = false;
   }
 
-  writeDb(db);
+  await writeDb(db);
   return res.json(stripPassword(db.users[index]));
 });
 
-app.delete('/api/users/:id', requireAuth, requireTierOneAdmin, (req, res) => {
+app.delete('/api/users/:id', requireAuth, requireTierOneAdmin, async (req, res) => {
   const { id } = req.params;
-  const db = readDb();
+  const db = await readDb();
   const target = db.users.find((u) => u.id === id);
 
   if (!target) return res.status(404).json({ message: 'User not found' });
@@ -599,13 +694,13 @@ app.delete('/api/users/:id', requireAuth, requireTierOneAdmin, (req, res) => {
   }
 
   db.users = db.users.filter((u) => u.id !== id);
-  writeDb(db);
+  await writeDb(db);
   res.status(204).send();
 });
 
-app.get('/api/subjects', requireAuth, (req, res) => {
+app.get('/api/subjects', requireAuth, async (req, res) => {
   const { deleted } = req.query;
-  const db = readDb();
+  const db = await readDb();
   const canViewConfidential = req.authCanViewConfidential;
 
   if (deleted === 'true') {
@@ -619,9 +714,9 @@ app.get('/api/subjects', requireAuth, (req, res) => {
   return res.json(db.subjects.map((s) => sanitizeSubjectForUser(s, canViewConfidential)));
 });
 
-app.get('/api/study-protocols', requireAuth, (req, res) => {
+app.get('/api/study-protocols', requireAuth, async (req, res) => {
   const { deleted } = req.query;
-  const db = readDb();
+  const db = await readDb();
 
   let protocols = [...db.studyProtocols];
   if (deleted === 'true') {
@@ -634,13 +729,13 @@ app.get('/api/study-protocols', requireAuth, (req, res) => {
   res.json(protocols);
 });
 
-app.post('/api/study-protocols', requireAuth, (req, res) => {
+app.post('/api/study-protocols', requireAuth, async (req, res) => {
   if (req.authUser?.role !== 'Admin') {
     return res.status(403).json({ message: 'Only Admin can create or edit study protocols.' });
   }
 
   const { data } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
 
   const projectName = String(data?.projectName || '').trim();
   const projectId = String(data?.projectId || '').trim();
@@ -688,18 +783,18 @@ app.post('/api/study-protocols', requireAuth, (req, res) => {
   };
 
   db.studyProtocols.push(newProtocol);
-  writeDb(db);
+  await writeDb(db);
   res.status(201).json(newProtocol);
 });
 
-app.put('/api/study-protocols/:id', requireAuth, (req, res) => {
+app.put('/api/study-protocols/:id', requireAuth, async (req, res) => {
   if (req.authUser?.role !== 'Admin') {
     return res.status(403).json({ message: 'Only Admin can create or edit study protocols.' });
   }
 
   const { id } = req.params;
   const { updates, baseState } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const index = db.studyProtocols.findIndex((protocol) => protocol.id === id && !protocol.isDeleted);
   if (index === -1) {
     return res.status(404).json({ message: 'Study protocol not found.' });
@@ -768,7 +863,7 @@ app.put('/api/study-protocols/:id', requireAuth, (req, res) => {
     };
 
     db.studyProtocols[index] = updated;
-    writeDb(db);
+    await writeDb(db);
     return res.json({ ...updated, mergeApplied: true, mergedFields: mergeResult.mergedFields });
   }
 
@@ -807,18 +902,18 @@ app.put('/api/study-protocols/:id', requireAuth, (req, res) => {
   };
 
   db.studyProtocols[index] = updated;
-  writeDb(db);
+  await writeDb(db);
   return res.json(updated);
 });
 
-app.post('/api/study-protocols/:id/soft-delete', requireAuth, (req, res) => {
+app.post('/api/study-protocols/:id/soft-delete', requireAuth, async (req, res) => {
   if (req.authUser?.role !== 'Admin') {
     return res.status(403).json({ message: 'Only Admin can create or edit study protocols.' });
   }
 
   const { id } = req.params;
   const { expectedVersion } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const index = db.studyProtocols.findIndex((protocol) => protocol.id === id && !protocol.isDeleted);
   if (index === -1) {
     return res.status(404).json({ message: 'Study protocol not found.' });
@@ -845,18 +940,18 @@ app.post('/api/study-protocols/:id/soft-delete', requireAuth, (req, res) => {
     ]
   };
 
-  writeDb(db);
+  await writeDb(db);
   return res.status(204).send();
 });
 
-app.post('/api/study-protocols/:id/restore', requireAuth, (req, res) => {
+app.post('/api/study-protocols/:id/restore', requireAuth, async (req, res) => {
   if (req.authUser?.role !== 'Admin') {
     return res.status(403).json({ message: 'Only Admin can create or edit study protocols.' });
   }
 
   const { id } = req.params;
   const { expectedVersion } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const index = db.studyProtocols.findIndex((protocol) => protocol.id === id && protocol.isDeleted);
   if (index === -1) {
     return res.status(404).json({ message: 'Study protocol not found.' });
@@ -883,13 +978,13 @@ app.post('/api/study-protocols/:id/restore', requireAuth, (req, res) => {
     ]
   };
 
-  writeDb(db);
+  await writeDb(db);
   return res.status(204).send();
 });
 
-app.post('/api/subjects', requireAuth, (req, res) => {
+app.post('/api/subjects', requireAuth, async (req, res) => {
   const { data } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
 
   if (!data?.subject_id) {
     return res.status(400).json({ message: 'subject_id is required.' });
@@ -933,14 +1028,14 @@ app.post('/api/subjects', requireAuth, (req, res) => {
   };
 
   db.subjects.push(newSubject);
-  writeDb(db);
+  await writeDb(db);
   res.status(201).json(newSubject);
 });
 
-app.put('/api/subjects/:id', requireAuth, (req, res) => {
+app.put('/api/subjects/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { updates, baseState } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const index = db.subjects.findIndex((s) => s.id === id);
 
   if (index === -1) return res.status(404).json({ message: 'Record not found' });
@@ -1006,7 +1101,7 @@ app.put('/api/subjects/:id', requireAuth, (req, res) => {
     }
 
     db.subjects[index] = mergedUpdated;
-    writeDb(db);
+    await writeDb(db);
     return res.json({ ...mergedUpdated, mergeApplied: true, mergedFields: mergeResult.mergedFields });
   }
 
@@ -1033,14 +1128,14 @@ app.put('/api/subjects/:id', requireAuth, (req, res) => {
   }
 
   db.subjects[index] = updated;
-  writeDb(db);
+  await writeDb(db);
   res.json(updated);
 });
 
-app.post('/api/subjects/:id/soft-delete', requireAuth, (req, res) => {
+app.post('/api/subjects/:id/soft-delete', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { expectedVersion } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const index = db.subjects.findIndex((s) => s.id === id);
 
   if (index === -1) return res.status(404).json({ message: 'Record not found' });
@@ -1072,14 +1167,14 @@ app.post('/api/subjects/:id/soft-delete', requireAuth, (req, res) => {
     ]
   };
 
-  writeDb(db);
+  await writeDb(db);
   res.status(204).send();
 });
 
-app.post('/api/subjects/:id/restore', requireAuth, (req, res) => {
+app.post('/api/subjects/:id/restore', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { expectedVersion } = req.body || {};
-  const db = readDb();
+  const db = await readDb();
   const index = db.subjects.findIndex((s) => s.id === id);
 
   if (index === -1) return res.status(404).json({ message: 'Record not found' });
@@ -1111,20 +1206,20 @@ app.post('/api/subjects/:id/restore', requireAuth, (req, res) => {
     ]
   };
 
-  writeDb(db);
+  await writeDb(db);
   res.status(204).send();
 });
 
-app.delete('/api/subjects/:id', requireAuth, (req, res) => {
+app.delete('/api/subjects/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
-  const db = readDb();
+  const db = await readDb();
   db.subjects = db.subjects.filter((s) => s.id !== id);
-  writeDb(db);
+  await writeDb(db);
   res.status(204).send();
 });
 
-app.get('/api/backup/export', requireAuth, requireAdmin, (_req, res) => {
-  const db = readDb();
+app.get('/api/backup/export', requireAuth, requireAdmin, async (_req, res) => {
+  const db = await readDb();
   res.json({
     meta: { timestamp: new Date().toISOString(), version: '1.0', app: 'BiomechBase' },
     data: {
@@ -1135,23 +1230,33 @@ app.get('/api/backup/export', requireAuth, requireAdmin, (_req, res) => {
   });
 });
 
-app.post('/api/backup/import', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/backup/import', requireAuth, requireAdmin, async (req, res) => {
   const payload = req.body || {};
   if (!payload.meta || !payload.data || !Array.isArray(payload.data.subjects)) {
     return res.status(400).json({ message: 'Invalid format' });
   }
 
-  const db = readDb();
+  const db = await readDb();
   db.subjects = payload.data.subjects;
   db.studyProtocols = Array.isArray(payload.data.studyProtocols) ? payload.data.studyProtocols : [];
   if (Array.isArray(payload.data.users)) {
     db.users = payload.data.users;
   }
 
-  writeDb(db);
+  await writeDb(db);
   res.status(204).send();
 });
 
-app.listen(PORT, () => {
-  console.log(`[biomechbase-api] listening on http://localhost:${PORT}`);
-});
+const startServer = async () => {
+  try {
+    await readDb();
+    app.listen(PORT, () => {
+      console.log(`[biomechbase-api] listening on http://localhost:${PORT} (db: ${DB_MODE})`);
+    });
+  } catch (error) {
+    console.error('[biomechbase-api] failed to initialize database:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
