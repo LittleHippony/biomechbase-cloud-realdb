@@ -1,11 +1,10 @@
 import { Subject, SubjectHistoryEntry, User } from '../types';
-import { API_BASE_URL, USE_CLOUD_STORAGE } from '../config';
+import { USE_CLOUD_STORAGE } from '../config';
+import { apiCall } from './apiClient';
 
 const SUBJECTS_KEY = 'biomech_subjects_db';
 const USERS_KEY = 'biomech_users_db'; // Reference for full backup
 const STUDY_PROTOCOLS_KEY = 'biomech_study_protocols_db';
-const SESSION_STORAGE_KEY = 'biomech_current_session';
-const SESSION_TOKEN_STORAGE_KEY = 'biomech_session_token';
 
 const memoryStorage = new Map<string, string>();
 
@@ -30,18 +29,6 @@ const safeRemoveItem = (key: string): void => {
     localStorage.removeItem(key);
   } catch {
     memoryStorage.delete(key);
-  }
-};
-
-const getSessionToken = (): string | null => {
-  return safeGetItem(SESSION_TOKEN_STORAGE_KEY);
-};
-
-const notifySessionExpired = (message: string) => {
-  safeRemoveItem(SESSION_TOKEN_STORAGE_KEY);
-  safeRemoveItem(SESSION_STORAGE_KEY);
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('biomech:session-expired', { detail: { message } }));
   }
 };
 
@@ -89,39 +76,6 @@ const tryThreeWayMerge = (current: Subject, updates: Partial<Subject>, baseState
   });
 
   return { canMerge: true, mergedState, mergedFields: clientChangedFields, conflictFields: [] as string[] };
-};
-
-const apiCall = async (endpoint: string, method: string = 'GET', body?: any) => {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = getSessionToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  const config: RequestInit = { method, headers };
-  if (body) config.body = JSON.stringify(body);
-
-  const baseUrl = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
-  const url = `${baseUrl}/api${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
-
-  const response = await fetch(url, config);
-  if (!response.ok) {
-    let message = 'API request failed';
-    try {
-      const error = await response.json();
-      message = error.message || message;
-    } catch {
-      // noop
-    }
-    if (response.status === 401) {
-      const sessionMessage = message || 'Session expired or invalid. Please sign in again.';
-      notifySessionExpired(sessionMessage);
-      throw new Error(sessionMessage);
-    }
-    throw new Error(message);
-  }
-
-  if (response.status === 204) return null;
-  return response.json();
 };
 
 export const dataService = {

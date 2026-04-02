@@ -1,5 +1,22 @@
 import { User, UserRole } from "../types";
-import { API_BASE_URL, USE_CLOUD_STORAGE } from '../config';
+import { USE_CLOUD_STORAGE } from '../config';
+import { apiCall } from './apiClient';
+
+interface StoredUser extends User {
+  password: string;
+  firstLoginCompleted?: boolean;
+}
+
+const getDefaultAdminPassword = (): string => {
+  const envPw = import.meta.env.VITE_DEFAULT_ADMIN_PASSWORD;
+  if (envPw) return envPw;
+  const stored = localStorage.getItem('biomech_admin_init_pw');
+  if (stored) return stored;
+  const pw = Array.from(crypto.getRandomValues(new Uint8Array(9))).map(b => b.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem('biomech_admin_init_pw', pw);
+  console.info('%c[BiomechBase] First-run admin password: ' + pw + '\nChange this via User Management after login.', 'color: orange; font-weight: bold');
+  return pw;
+};
 
 const USERS_STORAGE_KEY = 'biomech_users_db';
 const SESSION_STORAGE_KEY = 'biomech_current_session';
@@ -39,12 +56,11 @@ const notifySessionExpired = (message: string) => {
   }
 };
 
-// Default initial users - Only Admin as requested
-const DEFAULT_USERS: any[] = [
+const DEFAULT_USERS: StoredUser[] = [
   {
     id: 'usr_admin',
     username: 'admin',
-    password: 'Dongweiliu', // Specific password as requested
+    password: getDefaultAdminPassword(),
     fullName: 'System Administrator',
     email: 'admin@biomech.sys',
     role: 'Admin',
@@ -55,7 +71,7 @@ const DEFAULT_USERS: any[] = [
 ];
 
 // Helper to get users from "DB"
-const getUsersDB = (): any[] => {
+const getUsersDB = (): StoredUser[] => {
   const stored = safeGetItem(USERS_STORAGE_KEY);
   if (!stored) {
     safeSetItem(USERS_STORAGE_KEY, JSON.stringify(DEFAULT_USERS));
@@ -63,22 +79,16 @@ const getUsersDB = (): any[] => {
   }
   try {
     const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) {
-      throw new Error('Invalid users format');
-    }
-    return parsed;
+    if (!Array.isArray(parsed)) throw new Error('Invalid users format');
+    return parsed as StoredUser[];
   } catch {
     safeSetItem(USERS_STORAGE_KEY, JSON.stringify(DEFAULT_USERS));
     return DEFAULT_USERS;
   }
 };
 
-const saveUsersDB = (users: any[]) => {
+const saveUsersDB = (users: StoredUser[]) => {
   safeSetItem(USERS_STORAGE_KEY, JSON.stringify(users));
-};
-
-const getSessionToken = (): string | null => {
-  return safeGetItem(SESSION_TOKEN_STORAGE_KEY);
 };
 
 type RegistrationPayload = {
@@ -88,39 +98,6 @@ type RegistrationPayload = {
   email: string;
   role: UserRole;
   requestedAdminId?: string;
-};
-
-const apiCall = async (endpoint: string, method: string = 'GET', body?: any) => {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = getSessionToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  const config: RequestInit = { method, headers };
-  if (body) config.body = JSON.stringify(body);
-
-  const baseUrl = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
-  const url = `${baseUrl}/api${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
-
-  const response = await fetch(url, config);
-  if (!response.ok) {
-    let message = 'Auth request failed';
-    try {
-      const error = await response.json();
-      message = error.message || message;
-    } catch {
-      // noop
-    }
-    if (response.status === 401 && token) {
-      const sessionMessage = message || 'Session expired or invalid. Please sign in again.';
-      notifySessionExpired(sessionMessage);
-      throw new Error(sessionMessage);
-    }
-    throw new Error(message);
-  }
-
-  if (response.status === 204) return null;
-  return response.json();
 };
 
 export const authService = {
