@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { authService } from '../services/authService';
 import { Button } from './Button';
@@ -12,6 +12,12 @@ interface LoginModalProps {
 
 export const LoginModal: React.FC<LoginModalProps> = ({ onLogin, onCancel }) => {
   const [view, setView] = useState<'login' | 'register'>('login');
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onCancel]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -34,7 +40,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLogin, onCancel }) => 
     setLoading(true);
 
     try {
-      const user = await authService.login(username.trim(), password.trim());
+      const user = await authService.login(username.trim(), password);
       onLogin(user);
     } catch (err: any) {
       setError(err.message || "Login failed");

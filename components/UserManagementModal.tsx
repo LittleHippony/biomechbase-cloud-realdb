@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { authService } from '../services/authService';
 import { Button } from './Button';
-import { X, UserPlus, Shield, UserX, CheckCircle, Trash2, Clock, Mail, Copy, Key } from 'lucide-react';
+import { X, UserPlus, Shield, UserX, CheckCircle, Trash2, Clock, Mail, Copy, Key, AlertTriangle } from 'lucide-react';
 
 interface UserManagementModalProps {
   onClose: () => void;
@@ -120,6 +120,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ onClos
   const [view, setView] = useState<'list' | 'add' | 'invite'>('list');
   const [error, setError] = useState('');
   const [processingUserId, setProcessingUserId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [resetPwState, setResetPwState] = useState<{ user: User; value: string } | null>(null);
   
   // Manual Form State
   const [newUser, setNewUser] = useState({
@@ -188,7 +190,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ onClos
 
     // Derive username from email (remove special chars)
     const username = inviteEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g, '');
-    const password = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4); // Random 12 char string
+    const password = generateSecurePassword();
     const fullName = inviteEmail.split('@')[0]; // Use part of email as name initially
 
     try {
@@ -209,69 +211,67 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ onClos
     }
   };
 
+  const generateSecurePassword = (): string => {
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+  };
+
   const toggleStatus = async (user: User) => {
-    if (!isTierOneAdmin) {
-      alert('Primary Admin access required.');
-      return;
-    }
+    if (!isTierOneAdmin) { setError('Primary Admin access required.'); return; }
+    setError('');
     try {
       await authService.updateUser(user.id, { isActive: !user.isActive });
       await loadUsers();
     } catch (err: any) {
       if (isSessionError(err?.message)) return;
-      alert(err.message);
+      setError(err.message);
     }
   };
 
-  const deleteUser = async (id: string) => {
-    if (!isTierOneAdmin) {
-      alert('Primary Admin access required.');
-      return;
-    }
-    if(window.confirm(t.deleteConfirm)) {
-      try {
-        await authService.deleteUser(id);
-        await loadUsers();
-      } catch (err: any) {
-        if (isSessionError(err?.message)) return;
-        alert(err.message);
-      }
+  const confirmDelete = async (id: string) => {
+    setError('');
+    try {
+      await authService.deleteUser(id);
+      await loadUsers();
+    } catch (err: any) {
+      if (isSessionError(err?.message)) return;
+      setError(err.message);
+    } finally {
+      setConfirmDeleteId(null);
     }
   };
 
-  const generateTempPassword = () => {
-    return Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4);
-  };
-
-  const resetPassword = async (user: User) => {
-    if (!isTierOneAdmin) {
-      alert('Primary Admin access required.');
-      return;
-    }
-    const suggested = generateTempPassword();
-    const input = window.prompt(t.resetPrompt, suggested);
-    if (!input) return;
-
-    const tempPassword = input.trim();
-    if (tempPassword.length < 8) {
-      alert(t.resetPrompt);
-      return;
-    }
-
+  const submitResetPassword = async () => {
+    if (!resetPwState) return;
+    const { user, value } = resetPwState;
+    const tempPassword = value.trim();
+    if (tempPassword.length < 8) { setError(t.resetPrompt); return; }
+    setError('');
     try {
       setProcessingUserId(user.id);
       await authService.resetUserPassword(user.id, tempPassword);
-      alert(`${t.resetSuccess}\n\n${t.username}: ${user.username}\n${t.tempPassword}: ${tempPassword}`);
+      setResetPwState(null);
+      setError('');
     } catch (err: any) {
       if (isSessionError(err?.message)) return;
-      alert(err.message);
+      setError(err.message);
     } finally {
       setProcessingUserId(null);
     }
   };
 
-  const copyToClipboard = (text: string) => {
-      navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
   };
 
   return (
@@ -287,13 +287,17 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ onClos
               <h3 className="text-lg leading-6 font-medium text-gray-900 flex items-center">
                 <Shield className="mr-2 h-5 w-5 text-indigo-600"/> {t.title}
               </h3>
-              <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-500" aria-label="Close">
                 <X size={24} />
               </button>
             </div>
 
             <div className="p-6 flex-1 overflow-y-auto">
-              {error && view === 'list' && <div className="text-red-600 text-sm mb-3">{error}</div>}
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-sm flex items-center mb-4">
+                  <AlertTriangle className="h-4 w-4 mr-2 flex-shrink-0" /> {error}
+                </div>
+              )}
               {view === 'list' && (
                 <>
                   <div className="flex flex-col sm:flex-row justify-between mb-4 gap-2">
@@ -352,31 +356,57 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ onClos
                             <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                               {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : t.never}
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                               <button 
-                                onClick={() => toggleStatus(u)}
-                                disabled={processingUserId === u.id || !isTierOneAdmin}
-                                className={`${u.isActive ? 'text-red-500 hover:text-red-700' : 'text-green-600 hover:text-green-800 font-bold'}`}
-                                title={u.isActive ? t.deactivateUser : t.approveUser}
-                               >
-                                 {u.isActive ? <UserX size={16}/> : <CheckCircle size={18}/>}
-                               </button>
-                               <button
-                                onClick={() => resetPassword(u)}
-                                disabled={processingUserId === u.id || !isTierOneAdmin}
-                                className="text-indigo-500 hover:text-indigo-700"
-                                title={t.resetPassword}
-                               >
-                                 <Key size={16}/>
-                               </button>
-                               <button 
-                                onClick={() => deleteUser(u.id)}
-                                disabled={processingUserId === u.id || !isTierOneAdmin}
-                                className="text-gray-400 hover:text-red-600"
-                                title={t.delete}
-                               >
-                                 <Trash2 size={16}/>
-                               </button>
+                            <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                              {confirmDeleteId === u.id ? (
+                                <span className="inline-flex items-center space-x-2">
+                                  <span className="text-xs text-gray-600 mr-1">{t.deleteConfirm}</span>
+                                  <button onClick={() => confirmDelete(u.id)} className="text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded" aria-label="Confirm delete">Yes</button>
+                                  <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded border border-gray-300" aria-label="Cancel delete">No</button>
+                                </span>
+                              ) : resetPwState?.user.id === u.id ? (
+                                <span className="inline-flex items-center space-x-2">
+                                  <input
+                                    type="text"
+                                    className="border border-gray-300 rounded px-2 py-1 text-xs w-32 focus:ring-indigo-500 focus:border-indigo-500"
+                                    placeholder="New password"
+                                    value={resetPwState.value}
+                                    onChange={e => setResetPwState({ ...resetPwState, value: e.target.value })}
+                                    autoFocus
+                                  />
+                                  <button onClick={submitResetPassword} className="text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-1 rounded" aria-label="Confirm reset password">Set</button>
+                                  <button onClick={() => setResetPwState(null)} className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded border border-gray-300" aria-label="Cancel password reset">✕</button>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center space-x-2">
+                                  <button
+                                    onClick={() => toggleStatus(u)}
+                                    disabled={processingUserId === u.id || !isTierOneAdmin}
+                                    className={`${u.isActive ? 'text-red-500 hover:text-red-700' : 'text-green-600 hover:text-green-800 font-bold'}`}
+                                    aria-label={u.isActive ? `${t.deactivateUser}: ${u.username}` : `${t.approveUser}: ${u.username}`}
+                                    title={u.isActive ? t.deactivateUser : t.approveUser}
+                                  >
+                                    {u.isActive ? <UserX size={16}/> : <CheckCircle size={18}/>}
+                                  </button>
+                                  <button
+                                    onClick={() => setResetPwState({ user: u, value: generateSecurePassword() })}
+                                    disabled={processingUserId === u.id || !isTierOneAdmin}
+                                    className="text-indigo-500 hover:text-indigo-700"
+                                    aria-label={`${t.resetPassword}: ${u.username}`}
+                                    title={t.resetPassword}
+                                  >
+                                    <Key size={16}/>
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmDeleteId(u.id)}
+                                    disabled={processingUserId === u.id || !isTierOneAdmin}
+                                    className="text-gray-400 hover:text-red-600"
+                                    aria-label={`${t.delete}: ${u.username}`}
+                                    title={t.delete}
+                                  >
+                                    <Trash2 size={16}/>
+                                  </button>
+                                </span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -485,14 +515,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ onClos
                                   <label className="block text-xs text-gray-500 uppercase">{t.username}</label>
                                     <div className="flex justify-between items-center">
                                         <span className="font-mono font-medium text-gray-800">{generatedCreds.username}</span>
-                                        <button onClick={() => copyToClipboard(generatedCreds.username)} className="text-gray-400 hover:text-indigo-600"><Copy size={14}/></button>
+                                        <button onClick={() => copyToClipboard(generatedCreds.username)} className="text-gray-400 hover:text-indigo-600" aria-label="Copy username"><Copy size={14}/></button>
                                     </div>
                                 </div>
                                 <div className="border-t border-gray-100 pt-2">
                                   <label className="block text-xs text-gray-500 uppercase">{t.autoPassword}</label>
                                     <div className="flex justify-between items-center">
                                         <span className="font-mono font-medium text-gray-800">{generatedCreds.password}</span>
-                                        <button onClick={() => copyToClipboard(generatedCreds.password)} className="text-gray-400 hover:text-indigo-600"><Copy size={14}/></button>
+                                        <button onClick={() => copyToClipboard(generatedCreds.password)} className="text-gray-400 hover:text-indigo-600" aria-label="Copy password"><Copy size={14}/></button>
                                     </div>
                                 </div>
                             </div>

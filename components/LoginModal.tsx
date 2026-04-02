@@ -133,7 +133,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLogin, onCancel, langu
     setLoading(true);
 
     try {
-      const user = await authService.login(username.trim(), password.trim());
+      const user = await authService.login(username.trim(), password);
       onLogin(user);
     } catch (err: any) {
       setError(err.message || t.loginFailed);
