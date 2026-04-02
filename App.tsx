@@ -30,7 +30,9 @@ import {
   RefreshCcw,
   FileSpreadsheet,
   FileUp,
-  BookOpenText
+  BookOpenText,
+  CheckCircle,
+  AlertTriangle
 } from 'lucide-react';
 
 // Comprehensive CSV Headers - Reordered to prioritize Identity
@@ -718,6 +720,13 @@ const App: React.FC = () => {
   // Auth State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
+  // Inline confirmation state (replaces window.confirm / alert)
+  const [appError, setAppError] = useState<string | null>(null);
+  const [appSuccess, setAppSuccess] = useState<string | null>(null);
+  const [confirmSoftDeleteSubject, setConfirmSoftDeleteSubject] = useState<Subject | null>(null);
+  const [confirmHardDeleteId, setConfirmHardDeleteId] = useState<string | null>(null);
+  const [confirmRestoreDbPending, setConfirmRestoreDbPending] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null); // For CSV Import
   const dbInputRef = useRef<HTMLInputElement>(null);   // For DB Restore
   const t = UI_TEXT[language];
@@ -814,7 +823,7 @@ const App: React.FC = () => {
       setIsFormOpen(false);
       setEditingSubject(null);
       setIsLoginOpen(true);
-      alert(message);
+      setAppError(message);
     };
 
     window.addEventListener('biomech:session-expired', onSessionExpired as EventListener);
@@ -892,7 +901,7 @@ const App: React.FC = () => {
       setIsFormOpen(false);
     } catch (e: any) {
       if (isSessionError(e?.message)) return;
-      alert(e.message);
+      setAppError(e.message);
     }
   };
 
@@ -905,20 +914,23 @@ const App: React.FC = () => {
       await loadData();
     } catch (e: any) {
       if (isSessionError(e?.message)) return;
-      alert(e.message);
+      setAppError(e.message);
     }
   };
 
-  const handleSoftDelete = async (subject: Subject) => {
-    if (!currentUser) return;
-    if (window.confirm(t.confirmMoveRecycle)) {
-      try {
-        await dataService.softDelete(subject.id, currentUser, subject.version);
-        await loadData();
-      } catch (e: any) {
-        if (isSessionError(e?.message)) return;
-        alert(e.message);
-      }
+  const handleSoftDelete = (subject: Subject) => {
+    setConfirmSoftDeleteSubject(subject);
+  };
+
+  const executeSoftDelete = async () => {
+    if (!currentUser || !confirmSoftDeleteSubject) return;
+    setConfirmSoftDeleteSubject(null);
+    try {
+      await dataService.softDelete(confirmSoftDeleteSubject.id, currentUser, confirmSoftDeleteSubject.version);
+      await loadData();
+    } catch (e: any) {
+      if (isSessionError(e?.message)) return;
+      setAppError(e.message);
     }
   };
 
@@ -929,14 +941,23 @@ const App: React.FC = () => {
       await loadData();
     } catch (e: any) {
       if (isSessionError(e?.message)) return;
-      alert(e.message);
+      setAppError(e.message);
     }
   };
 
-  const handleHardDelete = async (id: string) => {
-    if (window.confirm(t.confirmHardDelete)) {
+  const handleHardDelete = (id: string) => {
+    setConfirmHardDeleteId(id);
+  };
+
+  const executeHardDelete = async () => {
+    if (!confirmHardDeleteId) return;
+    const id = confirmHardDeleteId;
+    setConfirmHardDeleteId(null);
+    try {
       await dataService.hardDelete(id);
       await loadData();
+    } catch (e: any) {
+      setAppError(e.message);
     }
   };
 
@@ -960,9 +981,12 @@ const App: React.FC = () => {
   };
 
   const handleRestoreDBClick = () => {
-    if (window.confirm(t.confirmRestoreDb)) {
-      dbInputRef.current?.click();
-    }
+    setConfirmRestoreDbPending(true);
+  };
+
+  const executeRestoreDB = () => {
+    setConfirmRestoreDbPending(false);
+    dbInputRef.current?.click();
   };
 
   const handleRestoreDBFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -973,11 +997,11 @@ const App: React.FC = () => {
       try {
         const content = e.target?.result as string;
         await dataService.restoreBackup(content);
-        alert(t.restoreSuccess);
-        window.location.reload();
+        setAppSuccess(t.restoreSuccess);
+        setTimeout(() => window.location.reload(), 1500);
       } catch (err: any) {
         if (isSessionError(err?.message)) return;
-        alert(`${t.restoreFailed} ${err.message}`);
+        setAppError(`${t.restoreFailed} ${err.message}`);
       }
     };
     reader.readAsText(file);
@@ -1134,11 +1158,11 @@ const App: React.FC = () => {
             await loadData();
         let msg = `${t.importComplete} ${successCount} ${t.recordsAdded}`;
         if (errors.length > 0) msg += `\n\n${t.errors}:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? '\n...' : ''}`;
-        alert(msg);
+        setAppSuccess(msg);
 
       } catch (err: any) {
         if (isSessionError(err?.message)) return;
-        alert(`${t.importFailed} ${err.message}`);
+        setAppError(`${t.importFailed} ${err.message}`);
       }
     };
     reader.readAsText(file);
@@ -1642,6 +1666,73 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
+      {/* Global Toast Notifications */}
+      {appError && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-lg w-full px-4">
+          <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg px-4 py-3 shadow-lg flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <span className="flex-1 text-sm">{appError}</span>
+            <button onClick={() => setAppError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0" aria-label="Dismiss error">✕</button>
+          </div>
+        </div>
+      )}
+      {appSuccess && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-lg w-full px-4">
+          <div className="bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-3 shadow-lg flex items-start gap-3">
+            <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+            <span className="flex-1 text-sm">{appSuccess}</span>
+            <button onClick={() => setAppSuccess(null)} className="text-green-400 hover:text-green-600 flex-shrink-0" aria-label="Dismiss">✕</button>
+          </div>
+        </div>
+      )}
+      {/* Soft Delete Confirmation Dialog */}
+      {confirmSoftDeleteSubject && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <Trash2 className="h-6 w-6 text-orange-500 flex-shrink-0" />
+              <h3 className="text-base font-semibold text-gray-900">{t.confirmMoveRecycle}</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">{confirmSoftDeleteSubject.subject_id}</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmSoftDeleteSubject(null)} className="px-3 py-1.5 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-50">{t.cancel || 'Cancel'}</button>
+              <button onClick={executeSoftDelete} className="px-3 py-1.5 text-sm bg-orange-500 text-white rounded hover:bg-orange-600">{t.moveToRecycleBin}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Hard Delete Confirmation Dialog */}
+      {confirmHardDeleteId && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <AlertTriangle className="h-6 w-6 text-red-600 flex-shrink-0" />
+              <h3 className="text-base font-semibold text-gray-900">{t.confirmHardDelete}</h3>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">This action cannot be undone.</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmHardDeleteId(null)} className="px-3 py-1.5 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-50">{t.cancel || 'Cancel'}</button>
+              <button onClick={executeHardDelete} className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700">{t.permanentlyDelete}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Restore DB Confirmation Dialog */}
+      {confirmRestoreDbPending && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <AlertTriangle className="h-6 w-6 text-red-600 flex-shrink-0" />
+              <h3 className="text-base font-semibold text-gray-900">{t.confirmRestoreDb}</h3>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">All current data will be overwritten.</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmRestoreDbPending(false)} className="px-3 py-1.5 text-sm border border-gray-300 rounded text-gray-700 hover:bg-gray-50">{t.cancel || 'Cancel'}</button>
+              <button onClick={executeRestoreDB} className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700">{t.restoreDb || 'Restore'}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -2027,11 +2118,11 @@ const App: React.FC = () => {
                         ) : (
                             // Edit / Soft Delete
                             <div className="flex justify-end space-x-3">
-                                <button onClick={() => startEdit(subject)} className="text-indigo-600 hover:text-indigo-900">
+                                <button onClick={() => startEdit(subject)} className="text-indigo-600 hover:text-indigo-900" aria-label={role === 'Visitor' ? `View ${subject.subject_id}` : `Edit ${subject.subject_id}`}>
                                     {role === 'Visitor' ? <Eye size={18} /> : <Edit size={18} />}
                                 </button>
                                 {role === 'Admin' && (
-                                    <button onClick={() => handleSoftDelete(subject)} className="text-orange-500 hover:text-orange-700" title={t.moveToRecycleBin}>
+                                    <button onClick={() => handleSoftDelete(subject)} className="text-orange-500 hover:text-orange-700" aria-label={t.moveToRecycleBin} title={t.moveToRecycleBin}>
                                         <Trash2 size={18} />
                                     </button>
                                 )}
