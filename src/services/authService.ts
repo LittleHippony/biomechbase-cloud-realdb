@@ -10,30 +10,11 @@ interface StoredUser extends User {
   password: string;
 }
 
-// On first run with no .env, generate a random admin password and log it once.
-const getDefaultAdminPassword = (): string => {
-  const envPw = import.meta.env.VITE_DEFAULT_ADMIN_PASSWORD;
-  if (envPw) return envPw;
-
-  const stored = localStorage.getItem('biomech_admin_init_pw');
-  if (stored) return stored;
-
-  const pw = Array.from(crypto.getRandomValues(new Uint8Array(9)))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-  localStorage.setItem('biomech_admin_init_pw', pw);
-  console.info(
-    '%c[BiomechBase] First-run admin password: ' + pw + '\nChange this via User Management after login.',
-    'color: orange; font-weight: bold'
-  );
-  return pw;
-};
-
 const DEFAULT_USERS: StoredUser[] = [
   {
     id: 'usr_admin',
     username: 'admin',
-    password: getDefaultAdminPassword(),
+    password: '123456',
     fullName: 'System Administrator',
     email: 'admin@biomech.sys',
     role: 'Admin',
